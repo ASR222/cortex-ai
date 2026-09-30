@@ -31,6 +31,7 @@ const THINKING_LABELS = ["Thinking", "Analyzing", "Reasoning", "Generating"];
 /** Shows the agent's live status ("Searching the web") or a cycling label. */
 function GeneratingIndicator({ status }) {
   const [labelIndex, setLabelIndex] = useState(0);
+  const [slow, setSlow] = useState(false);
 
   useEffect(() => {
     if (status) return undefined;
@@ -38,7 +39,14 @@ function GeneratingIndicator({ status }) {
     return () => clearInterval(interval);
   }, [status]);
 
-  const label = status || THINKING_LABELS[labelIndex];
+  // Services scale to zero when idle, so the first request after a quiet
+  // period waits for containers to start. Say so instead of looking stuck.
+  useEffect(() => {
+    const timer = setTimeout(() => setSlow(true), 6000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const label = status || (slow ? "Waking up the servers — the first request after a while takes a few seconds" : THINKING_LABELS[labelIndex]);
 
   return (
     <div className="flex items-center gap-3 py-1">
