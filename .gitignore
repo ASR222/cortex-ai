@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+deploy/gcp/secrets.env
 **/serviceAccount*.json
 
 # The original prototype, kept locally for reference only (contains secrets).

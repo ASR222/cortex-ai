@@ -53,6 +53,42 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  deploy:
+    name: Deploy to Cloud Run
+    # Only after every check passes, only for pushes to main, one at a time.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [go, agent, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets GitHub mint an OIDC token for Workload Identity Federation
+    concurrency: { group: deploy-production, cancel-in-progress: false }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read deploy/gcp/config.env
+        id: cfg
+        run: |
+          set -a; source deploy/gcp/config.env; set +a
+          if [ -z "$PROJECT_ID" ] || [ -z "$PROJECT_NUMBER" ]; then
+            echo "::notice::deploy/gcp/config.env is not filled in yet; skipping deploy."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "provider=projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github/providers/github-oidc" >> "$GITHUB_OUTPUT"
+          echo "service_account=cortex-deployer@$PROJECT_ID.iam.gserviceaccount.com" >> "$GITHUB_OUTPUT"
+      - name: Authenticate to Google Cloud (keyless)
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ steps.cfg.outputs.provider }}
+          service_account: ${{ steps.cfg.outputs.service_account }}
+      - if: steps.cfg.outputs.enabled == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Build, push and deploy
+        if: steps.cfg.outputs.enabled == 'true'
+        run: TAG="${GITHUB_SHA::7}" bash deploy/gcp/deploy.sh
+
   docker:
     name: Docker images build
     runs-on: ubuntu-latest

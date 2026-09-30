@@ -1,0 +1,9 @@
+# Used only by builds whose context is the repository root (deploy/gcp/gateway.Dockerfile).
+.git
+legacy
+**/node_modules
+**/dist
+**/.venv
+**/.env
+agent
+docs
