@@ -2,9 +2,9 @@
 
 A multi-agent AI assistant. One chat box routes each request to the right specialist agent: conversation, live web search, coding (with a live preview), questions about your own PDFs, image understanding, and generation of PDF reports, PowerPoint decks and images. It has streaming answers, credit-based billing and Google sign-in.
 
-**Stack:** Go (gateway, auth, chat and billing services) · Python (FastAPI + LangGraph agent service) · React · MongoDB · Redis · Qdrant · Docker Compose · Caddy
+**Stack:** Go (gateway, auth, chat and billing services) · Python (FastAPI + LangGraph agent service) · React · MongoDB · Redis · Qdrant · **Google Cloud Run** · Secret Manager · Cloud Storage · GitHub Actions CD · Docker
 
-> Live demo: `https://<your-subdomain>.duckdns.org` · Payments run in Razorpay **test mode**, so no real money moves.
+> Live demo: `https://cortex-gateway-<project-number>.<region>.run.app` · Payments run in Razorpay **test mode**, so no real money moves.
 
 ---
 
@@ -43,7 +43,8 @@ flowchart LR
     AG --> LLM[Groq · Gemini · Tavily]
 ```
 
-- **Only Caddy is exposed to the internet.** Every service sits on a private Docker network. Each one also requires a shared `X-Internal-Token`, so it can trust the `X-User-Id` header that only the gateway sets.
+- **Only the gateway is public.** On Cloud Run, the internal services accept only callers holding a Google identity token for a service account granted `roles/run.invoker` on that specific service; the grants mirror the call graph. Locally (Docker Compose), they sit on a private network instead. In both cases every service also requires a shared `X-Internal-Token`, so it can trust the `X-User-Id` header that only the gateway sets.
+- **Production runs on Google Cloud Run.** Each service scales to zero and has its own service account. Secrets come from Secret Manager, files live in Cloud Storage, and GitHub Actions deploys on every green push to `main` using keyless Workload Identity Federation. The diagram above shows the Docker Compose layout; [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) shows the Cloud Run one.
 - **Go for the platform, Python for the AI.** The request-heavy platform services (sessions, proxying, payments, CRUD) are small, fast Go binaries. The agent service is Python because LangGraph, LangChain and the document libraries live there.
 
 ### One chat turn
@@ -144,6 +145,7 @@ The tests focus on the parts where bugs cost money or leak data:
 
 More detail, including the trade-offs and what I'd do next, is in [docs/DESIGN.md](docs/DESIGN.md).
 
-## Deploying for free
+## Deploying
 
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) walks through running the whole stack on an Oracle Cloud Always-Free VM, with a free DuckDNS subdomain and automatic HTTPS.
+- **Google Cloud Run (primary):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Runs within free tiers (about $0–1 a month) and deploys automatically from GitHub Actions.
+- **Any single VM with Docker Compose:** [docs/DEPLOYMENT-VM.md](docs/DEPLOYMENT-VM.md), for example an Oracle Cloud Always-Free VM with a DuckDNS domain and Caddy HTTPS.

@@ -52,16 +52,29 @@ This document explains *why* the system is built the way it is. For each decisio
 
 **CSRF:** every non-GET request must carry `X-Requested-With: XMLHttpRequest`. Browsers won't add custom headers to cross-origin requests without a CORS preflight, and the gateway never approves one. Together with `SameSite=Lax` that gives two independent layers.
 
-**Same origin by design.** Caddy serves the SPA and proxies `/api` on the same domain, and Vite does the same in development. So there's no CORS configuration and no third-party-cookie problem.
+**Same origin by design.** The SPA and `/api` are always served from one origin:
+- **Cloud Run:** the gateway serves the built SPA itself (`STATIC_DIR`).
+- **Docker Compose:** Caddy serves it.
+- **Development:** Vite proxies `/api`.
+
+So there's no CORS configuration and no third-party-cookie problem.
 
 ## 3. Trust between services
 
-Services identify the user from the `X-User-Id` header. That's only safe if nobody but the gateway can set it, so there are three layers:
-1. **Network.** Only Caddy publishes ports; everything else is on the Docker network.
-2. **Shared secret.** Every service rejects requests without the correct `X-Internal-Token`. The comparison is constant-time (`subtle.ConstantTimeCompare`, `hmac.compare_digest`), so timing doesn't leak the token.
-3. **Header hygiene.** The gateway **deletes** any client-supplied `X-User-Id`, `X-Internal-Token`, `X-Request-Id` and `Cookie` headers before setting its own. It also refuses any path containing an `internal` segment, so `/api/chat/internal/...` can never reach the internal APIs.
+Services identify the user from the `X-User-Id` header. That's only safe if nobody but the gateway can call them, so there are several layers:
+1. **Caller identity (Cloud Run).**
+   - The internal services are deployed with `--no-allow-unauthenticated`.
+   - A caller must present a **Google-signed identity token** (a JWT) for its own service account. The token comes from the metadata server, which is reachable only inside Google Cloud, is cached, and is refreshed 5 minutes before expiry.
+   - The caller's service account must also hold `roles/run.invoker` **on that specific service**.
+   - Google's front end verifies all of this before a request reaches the container.
+   - The grants mirror the call graph exactly. For example, billing may call auth, but not chat or agent, so a compromised billing service can't touch conversations.
+   - **In Docker Compose**, the equivalent layer is the private network: only Caddy publishes ports.
+2. **Shared secret (defence in depth).** Every service also rejects requests without the correct `X-Internal-Token`. The comparison is constant-time (`subtle.ConstantTimeCompare`, `hmac.compare_digest`), so timing doesn't leak the token. This layer still protects the services if an IAM binding is ever misconfigured, and it's the main guard in Compose.
+3. **Header hygiene.**
+   - The gateway **deletes** any client-supplied `X-User-Id`, `X-Internal-Token`, `X-Request-Id`, `Cookie` and `Authorization` headers before setting its own.
+   - It refuses any path containing an `internal` segment, so `/api/chat/internal/...` can never reach the internal APIs.
 
-**What I'd do next:** mTLS between services, or signed short-lived service tokens, instead of one shared secret.
+**Why identity tokens instead of mTLS?** On Cloud Run, Google terminates TLS, so there's no certificate for us to manage. IAM gives per-caller, per-service authorization with audit logs, and nothing to rotate: tokens last an hour and no key files exist.
 
 ## 4. Authorization: no IDOR
 
@@ -156,7 +169,7 @@ MongoDB, through the chat service, is the source of truth. Redis caches the last
 
 ## 11. Files and storage
 
-- **Storage is an interface** with two backends: local disk (a Docker volume, the free default) and any S3-compatible bucket (AWS S3, Cloudflare R2, MinIO).
+- **Storage is an interface** with three backends: local disk (a Docker volume, the default for local use), **Google Cloud Storage** (production on Cloud Run) and any S3-compatible bucket (AWS S3, Cloudflare R2, MinIO).
 - **Links never expire.** The prototype embedded 24-hour presigned S3 URLs in chat text, so every old link died. Now messages store only the storage key and link to `/api/files/<key>`, and access is checked on every download: the session at the gateway, the owner in the agent. With S3 the agent redirects to a 5-minute presigned URL.
 - **Uploads** are limited to 20 MB and identified by **magic bytes** (`%PDF-`, PNG, JPEG, WebP and GIF signatures). The filename and `Content-Type` are ignored. Filenames are sanitised, and the storage path is checked so it can't escape the root directory.
 - **Downloads** are served with a restrictive `Content-Security-Policy` including `sandbox`. Only PDFs and images are shown inline; everything else downloads.
@@ -177,19 +190,40 @@ MongoDB, through the chat service, is the source of truth. Redis caches the last
 - **Rate limiter behaviour.** If Redis is unavailable, the gateway's limiter **fails open** so the API stays up; this is logged. The agent's limiter fails closed, because it protects paid quotas.
 - **A daily budget cap** (`DAILY_REQUEST_CAP`) protects the owner's API quotas on a public demo.
 
-## 14. Known limitations and next steps
+## 14. Deployment on Google Cloud Run
 
-- **Stale credit reservations:** add a periodic reaper that refunds `reserved` records older than about 10 minutes (crash recovery).
+| Decision | Why |
+|---|---|
+| **Cloud Run** instead of a VM or GKE | No servers to patch; HTTPS and autoscaling are built in; it scales to zero, so an idle demo costs nothing. GKE's cluster fee and operational load aren't justified for five small services. |
+| **Scale to zero, max 2 instances** | Stays inside the free tier and caps worst-case cost. The price is **cold starts**: Go services start in about a second, the Python agent in a few. `--cpu-boost` shortens that, and the UI says "waking up" instead of looking stuck. `--min-instances 1` on the gateway would remove it for a few dollars a month. |
+| **One service account per service** | Least privilege. Each can read only its own secrets, and only the agent can write to the bucket. |
+| **Secret Manager**, injected as env vars | Secrets never touch the repo, the image or CI logs. The deployer account can see secret *names*, but not values. |
+| **Workload Identity Federation** for GitHub Actions | GitHub mints a short-lived OIDC token; Google exchanges it for deployer credentials **only for this repo's `main` branch**. There's no JSON key to leak or rotate. |
+| **Deterministic service URLs** (`https://<svc>-<project#>.<region>.run.app`) | Services can be told each other's URLs before they exist, which breaks the gateway → agent → chat → agent cycle at deploy time. |
+| **The gateway serves the SPA** | One public service and one origin, so cookies are first-party and there's no CORS or extra hop. |
+| **Managed free tiers for data** (Atlas M0, Upstash Redis, Qdrant Cloud) | Cloud Run has no disk. Google's own managed Redis (Memorystore) and databases have no free tier. |
+| **Cloud Storage via the JSON API** | The agent authenticates with its own identity. Downloads stream through the agent (after the owner check) instead of using signed URLs, which would need a private key or a `signBlob` grant. |
+| **Synchronous cleanup on delete** | Cloud Run throttles the CPU once a response is sent, so background goroutines may never finish. |
+| **Artifact Registry cleanup policy** | Keeps the 3 newest images per service, which holds storage near the free 0.5 GB. |
+
+**Known trade-offs:**
+- **Atlas access.** Atlas must allow `0.0.0.0/0`, because Cloud Run's outbound IPs aren't fixed without Cloud NAT, which costs money. The strong generated password and TLS are the protection.
+- **Budget alerts are manual.** One is set up in the console.
+- **Infrastructure is created by shell scripts.** Terraform is the planned next step.
+
+## 15. Known limitations and next steps
+
+- **Terraform:** replace `setup.sh` with Terraform so every resource is declarative and reviewable.
+- **Stale credit reservations:** add a periodic reaper that refunds `reserved` records older than about 10 minutes (crash recovery). Cloud Scheduler plus a small endpoint would fit well.
 - **Fixed-window rate limits** allow bursts of up to 2× at window edges. A sliding window or token bucket (a Redis Lua script) would fix this.
-- **Service auth:** replace the shared internal token with mTLS or per-service signed tokens.
 - **Content Security Policy:** add a strict CSP for the SPA. It needs allow-listing for Firebase auth, Razorpay and the Monaco CDN, and iframe previews inherit it.
-- **Observability:** OpenTelemetry traces across Go and Python, and Prometheus metrics (latency, tokens, credits).
+- **Observability:** OpenTelemetry traces across Go and Python, exported to Cloud Trace, plus metrics (latency, tokens, credits).
 - **PDF ingestion as a background job** (a queue) for large files, with progress events.
 - **Evaluation:** a labelled prompt set to measure router accuracy, and RAG answer faithfulness.
 - **Backups:** a scheduled `mongodump` to object storage.
-- **Horizontal scaling:** everything except the local file store is already stateless. Switching `STORAGE_BACKEND=s3` makes the agent stateless too.
+- **Horizontal scaling:** on Cloud Run every service is already stateless (Redis, MongoDB, Qdrant and Cloud Storage hold all state), so scaling is just raising `--max-instances`.
 
-## 15. Likely interview questions and short answers
+## 16. Likely interview questions and short answers
 
 - **"Walk me through a request."** Use the sequence diagram in the README: cookie → gateway (session, rate limit, CSRF) → agent (ownership check, router, guard reserves credits, agent streams) → commit or refund → persist → `done`.
 - **"How do you prevent double spending?"** An atomic conditional update (`$gte` in the filter), a reservation state machine, and idempotent settle. See §5.
@@ -198,4 +232,7 @@ MongoDB, through the chat service, is the source of truth. Redis caches the last
 - **"How does streaming work through the proxies?"** SSE with buffering disabled in Caddy and in Go's ReverseProxy. See §8.
 - **"How do you stop users reading each other's data?"** Ownership filters in every query, namespaced file keys, and 404 for both "missing" and "not yours". See §4.
 - **"Why is the router reliable?"** Structured output with an enum, plus a safe default and explicit overrides. See §7.
-- **"What would break first at 100× traffic?"** LLM provider quotas, then the local file store and single MongoDB instance. The fixes are paid tiers or self-hosted models, S3 storage, a MongoDB replica set, and more agent replicas behind the gateway.
+- **"What would break first at 100× traffic?"** LLM provider quotas, then the free-tier databases (Atlas M0 limits, Upstash command quotas). The fixes are paid tiers or self-hosted models, dedicated database tiers, and higher `--max-instances`; the services themselves are stateless.
+- **"How do your services authenticate each other?"** Google identity tokens from the metadata server, with `roles/run.invoker` granted per service to mirror the call graph, plus a shared token for defence in depth. See §3.
+- **"How does CI/CD reach GCP without a key?"** Workload Identity Federation: GitHub's OIDC token is exchanged for short-lived deployer credentials, restricted to this repo's `main` branch. See §14.
+- **"Why Cloud Run and not Kubernetes?"** Five small stateless services, spiky low traffic and a free-tier budget. Scale-to-zero and no cluster to operate win; I'd revisit GKE for long-running workers, GPUs or a service mesh. See §14.
