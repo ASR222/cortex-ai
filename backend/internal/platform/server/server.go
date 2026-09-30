@@ -74,6 +74,8 @@ func HandleHealthcheckCommand(defaultAddr string) {
 	addr := defaultAddr
 	if v := os.Getenv("ADDR"); v != "" {
 		addr = v
+	} else if p := os.Getenv("PORT"); p != "" {
+		addr = ":" + p
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get("http://127.0.0.1" + addr + "/healthz")

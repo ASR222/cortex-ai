@@ -33,7 +33,7 @@ func main() {
 	server.SetupLogger("billing")
 
 	var cfg config.Loader
-	addr := cfg.String("ADDR", ":8083")
+	addr := cfg.Addr(":8083")
 	mongoURI := cfg.Required("MONGODB_URI")
 	dbName := cfg.String("MONGODB_DB", "cortexai")
 	internalToken := cfg.Required("INTERNAL_TOKEN")

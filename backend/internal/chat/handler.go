@@ -167,16 +167,15 @@ func (h *Handler) deleteConversation(w http.ResponseWriter, r *http.Request) err
 		return notFound(err)
 	}
 	if h.Cleaner != nil {
-		// Vector and file cleanup is best effort and must not block or fail
-		// the user's delete; it runs detached from the request context.
-		reqID := httpx.RequestID(r.Context())
-		go func() {
-			ctx, cancel := context.WithTimeout(httpx.WithRequestID(context.Background(), reqID), 30*time.Second)
-			defer cancel()
-			if err := h.Cleaner.CleanupConversation(ctx, userID, id); err != nil {
-				slog.WarnContext(ctx, "conversation cleanup failed", "conversation", id, "err", err)
-			}
-		}()
+		// Vector and file cleanup is best effort: a failure is logged, not
+		// returned. It runs before responding (with a short timeout) rather
+		// than in a background goroutine because Cloud Run throttles the CPU
+		// as soon as a response is sent, so detached work may never finish.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+		defer cancel()
+		if err := h.Cleaner.CleanupConversation(ctx, userID, id); err != nil {
+			slog.WarnContext(ctx, "conversation cleanup failed", "conversation", id, "err", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil

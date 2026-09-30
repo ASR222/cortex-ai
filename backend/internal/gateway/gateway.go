@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"cortexai/internal/platform/gcpauth"
 	"cortexai/internal/platform/httpx"
 	"cortexai/internal/platform/internalauth"
 )
@@ -28,7 +29,13 @@ type Config struct {
 	InternalToken                          string
 	CookieSecure                           bool
 	SessionTTL                             time.Duration
-	TrustProxy                             bool // read client IP from X-Forwarded-For (behind Caddy)
+	TrustProxy                             bool // read client IP from X-Forwarded-For (behind Caddy / Cloud Run)
+
+	// IDTokens attaches Google identity tokens to upstream calls (Cloud Run).
+	IDTokens gcpauth.TokenSource
+	// StaticDir, if set, serves the built frontend from the gateway itself so
+	// the site and API share one origin without a separate web server.
+	StaticDir string
 
 	LoginLimit Limit
 	APILimit   Limit
@@ -61,17 +68,19 @@ func New(cfg Config, sessions *Sessions, limiter *RateLimiter) *Gateway {
 		limiter:  limiter,
 		auth:     internalauth.NewClient(cfg.AuthURL.String(), cfg.InternalToken),
 	}
+	g.auth.IDTokens = cfg.IDTokens
 
-	chatUp := NewUpstream(cfg.ChatURL, "/api/chat", "", cfg.InternalToken, false)
-	agentUp := NewUpstream(cfg.AgentURL, "/api/agent", "", cfg.InternalToken, true)
-	filesUp := NewUpstream(cfg.AgentURL, "/api/files", "/files", cfg.InternalToken, true)
-	billingUp := NewUpstream(cfg.BillingURL, "/api/billing", "", cfg.InternalToken, false)
+	chatUp := NewUpstream(cfg.ChatURL, "/api/chat", "", cfg.InternalToken, false, cfg.IDTokens)
+	agentUp := NewUpstream(cfg.AgentURL, "/api/agent", "", cfg.InternalToken, true, cfg.IDTokens)
+	filesUp := NewUpstream(cfg.AgentURL, "/api/files", "/files", cfg.InternalToken, true, cfg.IDTokens)
+	billingUp := NewUpstream(cfg.BillingURL, "/api/billing", "", cfg.InternalToken, false, cfg.IDTokens)
 
 	r := chi.NewRouter()
-	r.Use(httpx.RequestIDMiddleware(false), httpx.Logger, httpx.Recoverer, securityHeaders)
+	r.Use(httpx.RequestIDMiddleware(false), httpx.Logger, httpx.Recoverer, securityHeaders(cfg.CookieSecure))
 	r.Get("/healthz", httpx.Healthz)
 
 	r.Route("/api", func(r chi.Router) {
+		r.Use(noStore)
 		// Razorpay calls this directly; it is authenticated by its HMAC
 		// signature in the billing service, not by a session or CSRF header.
 		r.With(g.rateLimitByIP(cfg.LoginLimit), bodyLimit(256<<10)).
@@ -94,7 +103,15 @@ func New(cfg Config, sessions *Sessions, limiter *RateLimiter) *Gateway {
 			})
 		})
 	})
+	var spa http.Handler
+	if cfg.StaticDir != "" {
+		spa = spaHandler(cfg.StaticDir)
+	}
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		if spa != nil && !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api" {
+			spa.ServeHTTP(w, r)
+			return
+		}
 		httpx.WriteError(w, r, httpx.ErrNotFound)
 	})
 	g.router = r
@@ -299,13 +316,26 @@ func bodyLimit(n int64) func(http.Handler) http.Handler {
 	}
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func securityHeaders(hsts bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := w.Header()
+			h.Set("X-Content-Type-Options", "nosniff")
+			h.Set("X-Frame-Options", "DENY")
+			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			h.Set("Permissions-Policy", "camera=(), geolocation=(), microphone=(self)")
+			if hsts {
+				h.Set("Strict-Transport-Security", "max-age=31536000")
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// noStore keeps API responses (user data) out of browser and proxy caches.
+func noStore(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("Cache-Control", "no-store")
+		w.Header().Set("Cache-Control", "no-store")
 		next.ServeHTTP(w, r)
 	})
 }

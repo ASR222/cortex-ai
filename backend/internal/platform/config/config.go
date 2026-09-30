@@ -92,3 +92,15 @@ func (l *Loader) Err() error {
 	}
 	return fmt.Errorf("config: %s", strings.Join(parts, "; "))
 }
+
+// Addr returns the listen address: ADDR if set, else ":$PORT" (Cloud Run
+// injects PORT), else def.
+func (l *Loader) Addr(def string) string {
+	if v := strings.TrimSpace(os.Getenv("ADDR")); v != "" {
+		return v
+	}
+	if p := strings.TrimSpace(os.Getenv("PORT")); p != "" {
+		return ":" + p
+	}
+	return def
+}

@@ -11,23 +11,27 @@ import (
 	"strings"
 	"time"
 
+	"cortexai/internal/platform/gcpauth"
 	"cortexai/internal/platform/httpx"
 )
 
 // Client calls another internal service with the shared token and the current
-// request id attached.
+// request id attached. On Cloud Run it also attaches a Google identity token
+// so the target's IAM check (roles/run.invoker) lets the call through.
 type Client struct {
-	BaseURL string
-	Token   string
-	HTTP    *http.Client
+	BaseURL  string
+	Token    string
+	IDTokens gcpauth.TokenSource // nil outside Google Cloud
+	HTTP     *http.Client
 }
 
 // NewClient returns a Client with a sensible timeout.
 func NewClient(baseURL, token string) *Client {
 	return &Client{
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		Token:   token,
-		HTTP:    &http.Client{Timeout: 15 * time.Second},
+		BaseURL:  strings.TrimRight(baseURL, "/"),
+		Token:    token,
+		IDTokens: gcpauth.FromEnv(),
+		HTTP:     &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -51,6 +55,13 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set(httpx.HeaderInternalToken, c.Token)
+	if c.IDTokens != nil {
+		tok, err := c.IDTokens.Token(ctx, c.BaseURL)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	if id := httpx.RequestID(ctx); id != "" {
 		req.Header.Set(httpx.HeaderRequestID, id)
 	}

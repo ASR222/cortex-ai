@@ -10,6 +10,7 @@ import (
 
 	"cortexai/internal/gateway"
 	"cortexai/internal/platform/config"
+	"cortexai/internal/platform/gcpauth"
 	"cortexai/internal/platform/server"
 )
 
@@ -26,7 +27,7 @@ func main() {
 	server.SetupLogger("gateway")
 
 	var cfg config.Loader
-	addr := cfg.String("ADDR", ":8080")
+	addr := cfg.Addr(":8080")
 	redisURL := cfg.Required("REDIS_URL")
 	internalToken := cfg.Required("INTERNAL_TOKEN")
 	authURL := cfg.Required("AUTH_SERVICE_URL")
@@ -39,6 +40,7 @@ func main() {
 	apiPerMin := cfg.Int("RATE_LIMIT_API_PER_MIN", 120)
 	agentPerMin := cfg.Int("RATE_LIMIT_AGENT_PER_MIN", 20)
 	loginPerMin := cfg.Int("RATE_LIMIT_LOGIN_PER_MIN", 10)
+	staticDir := cfg.String("STATIC_DIR", "")
 	if err := cfg.Err(); err != nil {
 		server.Fatal("invalid configuration", err)
 	}
@@ -63,6 +65,8 @@ func main() {
 		CookieSecure:  cookieSecure,
 		SessionTTL:    sessionTTL,
 		TrustProxy:    trustProxy,
+		IDTokens:      gcpauth.FromEnv(),
+		StaticDir:     staticDir,
 		LoginLimit:    gateway.Limit{Name: "login", Max: int64(loginPerMin), Window: time.Minute},
 		APILimit:      gateway.Limit{Name: "api", Max: int64(apiPerMin), Window: time.Minute},
 		AgentLimit:    gateway.Limit{Name: "agent", Max: int64(agentPerMin), Window: time.Minute},

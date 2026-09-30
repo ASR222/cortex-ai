@@ -29,7 +29,7 @@ func main() {
 	server.SetupLogger("chat")
 
 	var cfg config.Loader
-	addr := cfg.String("ADDR", ":8082")
+	addr := cfg.Addr(":8082")
 	mongoURI := cfg.Required("MONGODB_URI")
 	dbName := cfg.String("MONGODB_DB", "cortexai")
 	internalToken := cfg.Required("INTERNAL_TOKEN")

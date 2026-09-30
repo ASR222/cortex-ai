@@ -20,7 +20,7 @@ func main() {
 	server.SetupLogger("auth")
 
 	var cfg config.Loader
-	addr := cfg.String("ADDR", ":8081")
+	addr := cfg.Addr(":8081")
 	mongoURI := cfg.Required("MONGODB_URI")
 	dbName := cfg.String("MONGODB_DB", "cortexai")
 	internalToken := cfg.Required("INTERNAL_TOKEN")

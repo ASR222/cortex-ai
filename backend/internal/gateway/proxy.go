@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"cortexai/internal/platform/gcpauth"
 	"cortexai/internal/platform/httpx"
 )
 
@@ -18,7 +19,8 @@ var headersFromClient = []string{
 	httpx.HeaderUserID,
 	httpx.HeaderInternalToken,
 	httpx.HeaderRequestID,
-	"Cookie", // services have no use for the session cookie
+	"Cookie",        // services have no use for the session cookie
+	"Authorization", // only the gateway's own Google identity token may reach services
 	"X-User-Email",
 	"X-User-Avatar",
 }
@@ -31,8 +33,11 @@ type Upstream struct {
 // NewUpstream builds a reverse proxy to target. Requests to
 // publicPrefix + "/rest" are sent to target + upstreamPrefix + "/rest".
 // streaming disables response buffering so Server-Sent Events reach the
-// browser token by token.
-func NewUpstream(target *url.URL, publicPrefix, upstreamPrefix, internalToken string, streaming bool) *Upstream {
+// browser token by token. idTokens (Cloud Run only) adds a Google identity
+// token for the target so its IAM check accepts the gateway.
+func NewUpstream(target *url.URL, publicPrefix, upstreamPrefix, internalToken string, streaming bool,
+	idTokens gcpauth.TokenSource) *Upstream {
+	audience := strings.TrimRight(target.String(), "/")
 	p := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
@@ -48,6 +53,15 @@ func NewUpstream(target *url.URL, publicPrefix, upstreamPrefix, internalToken st
 			pr.Out.Header.Set(httpx.HeaderRequestID, httpx.RequestID(pr.In.Context()))
 			if uid, ok := userIDFrom(pr.In.Context()); ok {
 				pr.Out.Header.Set(httpx.HeaderUserID, uid)
+			}
+			if idTokens != nil {
+				tok, err := idTokens.Token(pr.In.Context(), audience)
+				if err != nil {
+					// The upstream will answer 401/403, which the client sees.
+					slog.ErrorContext(pr.In.Context(), "identity token", "audience", audience, "err", err)
+				} else {
+					pr.Out.Header.Set("Authorization", "Bearer "+tok)
+				}
 			}
 			pr.SetXForwarded()
 		},

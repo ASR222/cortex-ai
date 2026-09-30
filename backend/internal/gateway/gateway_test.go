@@ -1,11 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -74,12 +77,12 @@ type env struct {
 	redis *miniredis.Miniredis
 }
 
-func newEnv(t *testing.T, apiMax int64) *env {
+func newEnv(t *testing.T, apiMax int64, opts ...func(*Config)) *env {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	e := &env{chat: &seen{}, agent: &seen{}, redis: mr}
-	e.gw = New(Config{
+	cfg := Config{
 		AuthURL:       fakeAuth(t),
 		ChatURL:       upstream(t, e.chat),
 		AgentURL:      upstream(t, e.agent),
@@ -89,8 +92,19 @@ func newEnv(t *testing.T, apiMax int64) *env {
 		LoginLimit:    Limit{Name: "login", Max: 5, Window: time.Minute},
 		APILimit:      Limit{Name: "api", Max: apiMax, Window: time.Minute},
 		AgentLimit:    Limit{Name: "agent", Max: 100, Window: time.Minute},
-	}, &Sessions{Redis: rdb, TTL: time.Hour}, &RateLimiter{Redis: rdb})
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	e.gw = New(cfg, &Sessions{Redis: rdb, TTL: time.Hour}, &RateLimiter{Redis: rdb})
 	return e
+}
+
+// fakeIDTokens returns a predictable token per audience.
+type fakeIDTokens struct{}
+
+func (fakeIDTokens) Token(_ context.Context, audience string) (string, error) {
+	return "id-token-for-" + audience, nil
 }
 
 func (e *env) do(method, path, body string, hdr map[string]string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -229,4 +243,52 @@ func TestRequestIDFromClientIsNotTrusted(t *testing.T) {
 	rec := e.do(http.MethodGet, "/healthz", "", map[string]string{httpx.HeaderRequestID: "attacker"}, nil)
 	require.NotEqual(t, "attacker", rec.Header().Get(httpx.HeaderRequestID))
 	_, _ = io.Copy(io.Discard, rec.Body)
+}
+
+func TestIdentityTokenReplacesClientAuthorization(t *testing.T) {
+	e := newEnv(t, 100, func(c *Config) { c.IDTokens = fakeIDTokens{} })
+	c := e.login(t)
+	rec := e.do(http.MethodGet, "/api/chat/conversations", "", map[string]string{"Authorization": "Bearer forged"}, c)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	e.chat.mu.Lock()
+	defer e.chat.mu.Unlock()
+	got := e.chat.headers.Get("Authorization")
+	require.True(t, strings.HasPrefix(got, "Bearer id-token-for-http://127.0.0.1:"), got)
+}
+
+func TestClientAuthorizationIsStrippedWithoutIdentityTokens(t *testing.T) {
+	e := newEnv(t, 100)
+	c := e.login(t)
+	e.do(http.MethodGet, "/api/chat/conversations", "", map[string]string{"Authorization": "Bearer forged"}, c)
+	e.chat.mu.Lock()
+	defer e.chat.mu.Unlock()
+	require.Empty(t, e.chat.headers.Get("Authorization"))
+}
+
+func TestServesSinglePageApp(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>app</html>"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "app-abc123.js"), []byte("js"), 0o644))
+	e := newEnv(t, 100, func(c *Config) { c.StaticDir = dir })
+
+	rec := e.do(http.MethodGet, "/", "", nil, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "app")
+	require.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
+
+	rec = e.do(http.MethodGet, "/some/client/route", "", nil, nil)
+	require.Contains(t, rec.Body.String(), "app", "unknown paths fall back to index.html")
+
+	rec = e.do(http.MethodGet, "/assets/app-abc123.js", "", nil, nil)
+	require.Equal(t, "js", rec.Body.String())
+	require.Contains(t, rec.Header().Get("Cache-Control"), "immutable")
+
+	rec = e.do(http.MethodGet, "/assets/", "", nil, nil)
+	require.NotContains(t, rec.Body.String(), "app-abc123.js", "no directory listing")
+
+	rec = e.do(http.MethodGet, "/api/nope", "", nil, nil)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), `"code":"not_found"`, "API 404s stay JSON")
 }
