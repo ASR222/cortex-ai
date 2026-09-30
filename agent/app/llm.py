@@ -24,7 +24,12 @@ def _build(spec: str, s: Settings, temperature: float, max_tokens: int) -> BaseC
             raise AgentError(503, "not_configured", "The Groq API key is not configured.")
         from langchain_groq import ChatGroq
 
-        return ChatGroq(model=model, api_key=s.groq_api_key, max_tokens=max_tokens, **common)
+        extra = {}
+        if model.startswith("openai/gpt-oss"):
+            # Reasoning model: hidden reasoning tokens count toward max_tokens.
+            # Low effort keeps replies fast and leaves room for the answer.
+            extra["reasoning_effort"] = "low"
+        return ChatGroq(model=model, api_key=s.groq_api_key, max_tokens=max_tokens, **extra, **common)
 
     if provider == "google":
         if not s.google_api_key:

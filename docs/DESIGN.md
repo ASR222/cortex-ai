@@ -127,7 +127,7 @@ START → router → guard → {chat | search | coding | pdf | ppt | image | vis
 **router:**
 - An explicit user choice wins.
 - An uploaded image goes to `vision`; an uploaded PDF goes to `rag`.
-- Otherwise a small, fast model (`llama-3.1-8b-instant`) classifies the message using **structured output**, a Pydantic model with a `Literal` enum. That means the model can only return a valid agent name.
+- Otherwise a small, fast model (`openai/gpt-oss-20b` on Groq, low reasoning effort) classifies the message using **structured output**, a Pydantic model with a `Literal` enum. That means the model can only return a valid agent name.
 - If classification fails for any reason, the request goes to `chat`.
 - `rag` is offered only when the conversation has documents.
 

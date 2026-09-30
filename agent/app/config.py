@@ -26,12 +26,12 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
 
     # Models as "provider:model". Providers: groq, google, openrouter.
-    router_model: str = "groq:llama-3.1-8b-instant"
-    chat_model: str = "groq:llama-3.3-70b-versatile"
-    coding_model: str = "groq:llama-3.3-70b-versatile"
-    documents_model: str = "groq:llama-3.3-70b-versatile"
+    router_model: str = "groq:openai/gpt-oss-20b"
+    chat_model: str = "groq:openai/gpt-oss-120b"
+    coding_model: str = "groq:openai/gpt-oss-120b"
+    documents_model: str = "groq:openai/gpt-oss-120b"
     vision_model: str = "google:gemini-2.5-flash"
-    fallback_model: str = "groq:llama-3.1-8b-instant"
+    fallback_model: str = "groq:openai/gpt-oss-20b"
     llm_timeout_seconds: float = 90
 
     # RAG

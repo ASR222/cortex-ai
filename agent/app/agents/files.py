@@ -104,7 +104,7 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 async def image_agent(state: AgentState, config: RunnableConfig) -> AgentState:
     deps, req = deps_of(config), request_of(config)
     status("Crafting the prompt")
-    model = deps.models.get(deps.settings.chat_model, temperature=0.8, max_tokens=200)
+    model = deps.models.get(deps.settings.chat_model, temperature=0.8, max_tokens=1024)
     enhanced = (await model.ainvoke([SystemMessage(IMAGE_PROMPT), HumanMessage(state["prompt"])])).content
     enhanced = str(enhanced).strip().strip('"')[:500] or state["prompt"][:500]
 

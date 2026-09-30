@@ -127,3 +127,25 @@ def test_build_pptx_is_valid():
     )
     prs = Presentation(BytesIO(build_pptx(spec)))
     assert len(prs.slides) == 5
+
+
+def test_gpt_oss_models_use_low_reasoning_effort():
+    from app.config import Settings
+    from app.llm import _build
+
+    s = Settings(
+        internal_token="t", redis_url="r", chat_service_url="c", auth_service_url="a", groq_api_key="k", _env_file=None
+    )
+    assert _build("groq:openai/gpt-oss-20b", s, 0, 1024).reasoning_effort == "low"
+    assert _build("groq:qwen/qwen3-32b", s, 0, 1024).reasoning_effort is None
+
+
+def test_logs_use_cloud_logging_severity():
+    import json
+    import logging
+
+    from app.main import JSONFormatter
+
+    record = logging.LogRecord("x", logging.ERROR, __file__, 1, "boom", None, None)
+    entry = json.loads(JSONFormatter().format(record))
+    assert entry["severity"] == "ERROR" and "level" not in entry

@@ -82,7 +82,7 @@ deploy billing --no-allow-unauthenticated --memory 256Mi \
     RAZORPAY_KEY_SECRET=razorpay-key-secret RAZORPAY_WEBHOOK_SECRET=razorpay-webhook-secret)"
 
 deploy agent --no-allow-unauthenticated --memory 1Gi --timeout 300 \
-  --set-env-vars "SERVICE_AUTH=google,CHAT_SERVICE_URL=$(url chat),AUTH_SERVICE_URL=$(url auth),QDRANT_URL=$QDRANT_URL,STORAGE_BACKEND=gcs,GCS_BUCKET=$GCS_BUCKET,CODING_MODEL=${CODING_MODEL:-groq:llama-3.3-70b-versatile},DAILY_REQUEST_CAP=${DAILY_REQUEST_CAP:-1500}" \
+  --set-env-vars "SERVICE_AUTH=google,CHAT_SERVICE_URL=$(url chat),AUTH_SERVICE_URL=$(url auth),QDRANT_URL=$QDRANT_URL,STORAGE_BACKEND=gcs,GCS_BUCKET=$GCS_BUCKET,CHAT_MODEL=${CHAT_MODEL:-groq:openai/gpt-oss-120b},CODING_MODEL=${CODING_MODEL:-groq:openai/gpt-oss-120b},DOCUMENTS_MODEL=${DOCUMENTS_MODEL:-groq:openai/gpt-oss-120b},ROUTER_MODEL=${ROUTER_MODEL:-groq:openai/gpt-oss-20b},FALLBACK_MODEL=${FALLBACK_MODEL:-groq:openai/gpt-oss-20b},DAILY_REQUEST_CAP=${DAILY_REQUEST_CAP:-1500}" \
   --set-secrets "$(secrets INTERNAL_TOKEN=internal-token REDIS_URL=redis-url QDRANT_API_KEY=qdrant-api-key \
     GROQ_API_KEY=groq-api-key GOOGLE_API_KEY=google-api-key TAVILY_API_KEY=tavily-api-key \
     OPENROUTER_API_KEY=openrouter-api-key)"

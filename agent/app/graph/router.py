@@ -76,7 +76,7 @@ async def classify(state: AgentState, config: RunnableConfig) -> str:
         names = ", ".join(d["name"] for d in docs[-5:])
         rag_line = f"- rag: questions about the user's uploaded documents ({names})."
     try:
-        model = deps.models.raw(deps.settings.router_model, temperature=0, max_tokens=64)
+        model = deps.models.raw(deps.settings.router_model, temperature=0, max_tokens=1024)
         result = await model.with_structured_output(Route).ainvoke(
             [
                 SystemMessage(ROUTER_PROMPT.format(rag_line=rag_line)),

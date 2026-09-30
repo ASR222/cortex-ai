@@ -12,7 +12,7 @@ A multi-agent AI assistant. One chat box routes each request to the right specia
 
 | Agent | What it does | Powered by |
 |---|---|---|
-| Chat | General conversation with memory | Llama 3.3 70B on Groq |
+| Chat | General conversation with memory | gpt-oss-120b on Groq |
 | Search | Answers from fresh web results with numbered citations | Tavily + LLM |
 | Coding | Builds multi-file projects (live HTML/CSS/JS preview), or reviews/explains code | LLM + artifact panel |
 | Document Q&A (RAG) | Upload a PDF, ask questions, get answers citing page numbers | Gemini embeddings + Qdrant |

@@ -30,7 +30,8 @@ class JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         entry = {
             "time": self.formatTime(record),
-            "level": record.levelname,
+            # Cloud Logging reads "severity" to classify log entries (ERROR, WARNING, ...).
+            "severity": record.levelname,
             "service": "agent",
             "logger": record.name,
             "msg": record.getMessage(),
