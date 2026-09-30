@@ -11,18 +11,26 @@ from urllib.parse import quote
 import httpx
 
 from app.errors import AgentError
+from app.gcp import MetadataTokens
 
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 
 class ServiceClient:
-    def __init__(self, base_url: str, token: str, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self, base_url: str, token: str, client: httpx.AsyncClient, id_tokens: MetadataTokens | None = None
+    ) -> None:
         self._base = base_url.rstrip("/")
         self._token = token
         self._http = client
+        # On Cloud Run: a Google identity token for the target service, so its
+        # IAM check (roles/run.invoker) accepts this service as the caller.
+        self._id_tokens = id_tokens
 
     async def request(self, method: str, path: str, json: Any = None) -> Any:
         headers = {"X-Internal-Token": self._token}
+        if self._id_tokens is not None:
+            headers["Authorization"] = f"Bearer {await self._id_tokens.id_token(self._base)}"
         if rid := request_id_var.get():
             headers["X-Request-Id"] = rid
         resp = await self._http.request(method, self._base + path, json=json, headers=headers)

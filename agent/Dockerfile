@@ -20,6 +20,9 @@ USER agent
 
 EXPOSE 8084
 HEALTHCHECK --interval=15s --timeout=3s --retries=5 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/healthz', timeout=2)"
+  CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT', '8084') + '/healthz', timeout=2)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8084", "--timeout-graceful-shutdown", "20"]
+# Cloud Run injects PORT; locally it defaults to 8084. `exec` replaces the
+# shell so uvicorn receives SIGTERM directly and shuts down gracefully
+# (Cloud Run allows 10 seconds).
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8084} --timeout-graceful-shutdown 8"]

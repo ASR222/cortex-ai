@@ -11,6 +11,9 @@ class Settings(BaseSettings):
 
     # Internal wiring
     internal_token: str
+    # "google" on Cloud Run: attach identity tokens to service-to-service calls
+    # and use the service account for Google APIs. "none" locally.
+    service_auth: Literal["none", "google"] = "none"
     redis_url: str
     chat_service_url: str
     auth_service_url: str
@@ -38,10 +41,11 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_collection: str = "documents"
 
-    # File storage: "local" (a Docker volume) or "s3" (any S3-compatible
-    # store such as Cloudflare R2 or AWS S3).
-    storage_backend: Literal["local", "s3"] = "local"
+    # File storage: "local" (a Docker volume), "gcs" (Google Cloud Storage,
+    # authenticated as the service account) or "s3" (any S3-compatible store).
+    storage_backend: Literal["local", "s3", "gcs"] = "local"
     storage_dir: str = "/data/files"
+    gcs_bucket: str = ""
     s3_bucket: str = ""
     s3_endpoint_url: str = ""
     s3_region: str = "auto"

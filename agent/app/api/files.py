@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from app.api.chat import user_id_of
 from app.errors import AgentError
@@ -16,6 +16,7 @@ router = APIRouter()
 # Only these types are shown in the browser; everything else downloads.
 # Uploads were already type-checked by content, and none of these can run script.
 INLINE = {"application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"}
+FILE_CSP = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
 
 
 @router.get("/files/{key:path}")
@@ -34,12 +35,22 @@ async def download(key: str, request: Request) -> Response:
         return not_found
     if stored.url:
         return RedirectResponse(stored.url, status_code=302)
+    disposition = "inline" if stored.mime in INLINE else "attachment"
+    if stored.chunks:
+        return StreamingResponse(
+            stored.chunks(),
+            media_type=stored.mime,
+            headers={
+                "Content-Disposition": f'{disposition}; filename="{stored.name}"',
+                "Content-Security-Policy": FILE_CSP,
+            },
+        )
     return FileResponse(
         stored.path,
         media_type=stored.mime,
         filename=stored.name,
-        content_disposition_type="inline" if stored.mime in INLINE else "attachment",
-        headers={"Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"},
+        content_disposition_type=disposition,
+        headers={"Content-Security-Policy": FILE_CSP},
     )
 
 

@@ -17,12 +17,13 @@ from app.api import chat as chat_api
 from app.api import files as files_api
 from app.clients import AuthClient, ChatClient, request_id_var
 from app.config import Settings, get_settings
+from app.gcp import MetadataTokens
 from app.graph.context import Deps
 from app.limits import Limiter
 from app.llm import Models
 from app.memory import ConversationMemory
 from app.rag import DocumentIndex
-from app.storage import LocalStorage, S3Storage, Storage
+from app.storage import GCSStorage, LocalStorage, S3Storage, Storage
 
 
 class JSONFormatter(logging.Formatter):
@@ -47,7 +48,11 @@ def setup_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def make_storage(s: Settings) -> Storage:
+def make_storage(s: Settings, http: httpx.AsyncClient, tokens: MetadataTokens | None) -> Storage:
+    if s.storage_backend == "gcs":
+        if tokens is None:
+            raise RuntimeError("STORAGE_BACKEND=gcs requires SERVICE_AUTH=google")
+        return GCSStorage(s.gcs_bucket, http, tokens)
     if s.storage_backend == "s3":
         return S3Storage(s.s3_bucket, s.s3_endpoint_url, s.s3_region, s.s3_access_key_id, s.s3_secret_access_key)
     return LocalStorage(s.storage_dir)
@@ -56,16 +61,17 @@ def make_storage(s: Settings) -> Storage:
 def make_deps(s: Settings) -> Deps:
     http = httpx.AsyncClient(timeout=httpx.Timeout(30, connect=5))
     redis = Redis.from_url(s.redis_url, decode_responses=True)
-    chat = ChatClient(s.chat_service_url, s.internal_token, http)
+    tokens = MetadataTokens(http) if s.service_auth == "google" else None
+    chat = ChatClient(s.chat_service_url, s.internal_token, http, tokens)
     qdrant = AsyncQdrantClient(url=s.qdrant_url, api_key=s.qdrant_api_key or None)
     return Deps(
         settings=s,
         models=Models(s),
         chat=chat,
-        auth=AuthClient(s.auth_service_url, s.internal_token, http),
+        auth=AuthClient(s.auth_service_url, s.internal_token, http, tokens),
         memory=ConversationMemory(redis, chat),
         limiter=Limiter(redis, s.daily_request_cap),
-        storage=make_storage(s),
+        storage=make_storage(s, http, tokens),
         index=DocumentIndex(qdrant, s.google_api_key, s.qdrant_collection, s.embedding_model, s.embedding_dim),
         http=http,
     )
