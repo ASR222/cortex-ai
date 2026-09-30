@@ -1,0 +1,37 @@
+# SITE_ADDRESS is a domain (e.g. cortexai.duckdns.org) in production, which
+# makes Caddy obtain and renew a Let's Encrypt certificate automatically, or
+# http://localhost for local runs.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=(self)"
+		-Server
+	}
+
+	# API: everything goes through the Go gateway. flush_interval -1 disables
+	# buffering so streamed (SSE) answers reach the browser immediately.
+	handle /api/* {
+		reverse_proxy gateway:8080 {
+			flush_interval -1
+		}
+	}
+
+	# Single-page app: unknown paths fall back to index.html.
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
