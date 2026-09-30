@@ -1,0 +1,26 @@
+# Secrets
+.env
+.env.*
+!.env.example
+**/serviceAccount*.json
+
+# The original prototype, kept locally for reference only (contains secrets).
+legacy/
+
+# Build output and dependencies
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+coverage/
+*.out
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+agent/data/
