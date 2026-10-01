@@ -25,3 +25,9 @@ coverage/
 .DS_Store
 Thumbs.db
 agent/data/
+
+# Terraform
+infra/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan

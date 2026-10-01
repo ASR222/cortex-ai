@@ -1,6 +1,9 @@
 # Deploying CortexAI to Google Cloud Run
 
-This guide deploys the five services to **Cloud Run** (serverless containers that scale to zero), backed by free managed data services. Deploys are automatic: every push to `main` that passes CI is built and deployed by GitHub Actions, which authenticates to Google with **Workload Identity Federation**, so no key file exists anywhere.
+This guide deploys the five services to **Cloud Run** (serverless containers that scale to zero), backed by free managed data services.
+- **Terraform** (`infra/`) defines all of the infrastructure.
+- **Code deploys are automatic:** every push to `main` that passes CI is built and rolled out by GitHub Actions.
+- **No key file exists anywhere:** GitHub Actions authenticates to Google with **Workload Identity Federation**.
 
 ```mermaid
 flowchart LR
@@ -20,7 +23,7 @@ flowchart LR
     GH[GitHub Actions] -->|OIDC, no keys| AR[Artifact Registry] --> GW
 ```
 
-Only `cortex-gateway` is public. The other four are deployed with `--no-allow-unauthenticated`, so Google's front end rejects any request without an identity token from a service account granted `roles/run.invoker` on that specific service. The grants mirror the call graph exactly.
+Only `cortex-gateway` is public. The other four services reject any request that lacks an identity token from a service account granted `roles/run.invoker` on that specific service; Google's front end enforces this. The grants mirror the call graph exactly.
 
 ## What it costs
 
@@ -29,7 +32,7 @@ Only `cortex-gateway` is public. The other four are deployed with `--no-allow-un
 | Cloud Run | 2M requests, 180k vCPU-seconds and 360k GiB-seconds per month | Demo traffic stays inside it; instances scale to zero |
 | Artifact Registry | 0.5 GB storage | A cleanup policy keeps the 3 newest images per service; may slightly exceed it (cents) |
 | Secret Manager | 6 active secret versions | 7–10 secrets, so roughly $0.25/month |
-| Cloud Storage | 5 GB, but only in `us-*` regions | A few MB in your region, costing cents |
+| Cloud Storage | 5 GB, but only in `us-*` regions | A few MB in your region plus the Terraform state, costing cents |
 | MongoDB Atlas M0, Upstash Redis, Qdrant Cloud | Free tiers | $0 |
 
 Realistically this is **$0–1 a month**. Google requires a billing account (a card) even for free-tier use, so **set a budget alert** (step 7). Every service is capped at 2 instances.
@@ -59,7 +62,7 @@ Create these first. They're all free.
 ## 2. Google Cloud project
 
 1. Go to https://console.cloud.google.com and create a project, for example `cortex-ai-yourname`. Link a billing account; new accounts also get trial credit.
-2. Open **Cloud Shell** (the `>_` icon, top right). It already has `gcloud` and `docker`, and it's the easiest place to run the setup.
+2. Open **Cloud Shell** (the `>_` icon, top right). It already has `gcloud`, `docker` and `terraform`.
 
 ## 3. Fill in the configuration
 
@@ -73,7 +76,16 @@ git clone https://github.com/<you>/cortex-ai.git
 cd cortex-ai
 ```
 
-Edit **`deploy/gcp/config.env`** with `PROJECT_ID`, `REGION`, `GITHUB_REPO` (as `owner/name`), a globally unique `GCS_BUCKET`, the Firebase web values, `RAZORPAY_KEY_ID` and `QDRANT_URL`. None of these are secret, so this file is committed.
+Two committed files hold the settings. Neither contains secrets:
+
+- **`infra/terraform.tfvars`**: the project id and number, region, `github_repo` (as `owner/name`), a globally unique `gcs_bucket`, `firebase_project_id`, `razorpay_key_id`, `qdrant_url`, and the list of `secrets` you'll provide.
+- **`deploy/gcp/config.env`**: the project id and number, region, and the Firebase web values that get baked into the frontend build.
+
+Find the project number with:
+
+```bash
+gcloud projects describe <project-id> --format='value(projectNumber)'
+```
 
 Then create **`deploy/gcp/secrets.env`**, which is **never committed**:
 
@@ -81,38 +93,59 @@ Then create **`deploy/gcp/secrets.env`**, which is **never committed**:
 cp deploy/gcp/secrets.env.example deploy/gcp/secrets.env
 ```
 
-Fill in the Mongo, Redis and Qdrant values plus all the API keys. Generate `INTERNAL_TOKEN` with:
+Fill in the Mongo, Redis and Qdrant values plus the API keys. Generate `INTERNAL_TOKEN` with:
 
 ```bash
 openssl rand -hex 32
 ```
 
-## 4. One-time setup
+## 4. Bootstrap, then Terraform
+
+**Bootstrap** does the two things Terraform can't: it creates the bucket for Terraform's own state, and uploads secret values. Values never pass through Terraform, so they never land in its state file.
 
 ```bash
-bash deploy/gcp/setup.sh
+bash deploy/gcp/bootstrap.sh
 ```
-
-This enables the APIs and creates:
-- The Artifact Registry repo.
-- One service account per service.
-- The secrets, each readable only by the services that need it.
-- The private bucket.
-- The GitHub keyless-deploy trust.
-
-At the end it prints your **`PROJECT_NUMBER`**. Put that in `config.env`.
-
-Once setup is done, delete the local secrets file. The values now live in Secret Manager:
 
 ```bash
 rm deploy/gcp/secrets.env
 ```
 
-To change a secret later, recreate the file and run `setup.sh` again. It only adds a new version when a value changed.
+**Terraform** creates everything else from `infra/`:
+- The APIs and the Artifact Registry repo (with a cleanup policy).
+- One service account per service.
+- Secret access, so each service can read only its own secrets.
+- The private bucket.
+- The five Cloud Run services, and which service may call which.
+- The keyless GitHub deploy trust.
+
+For a **brand-new project**, delete `infra/imports.tf` first. It's only for adopting resources that already exist (see "Adopting Terraform" below).
+
+```bash
+cd infra
+```
+
+```bash
+terraform init -backend-config="bucket=<project-id>-tfstate"
+```
+
+```bash
+terraform plan -out tf.plan
+```
+
+Read the plan, then apply it:
+
+```bash
+terraform apply tf.plan
+```
+
+Commit the `.terraform.lock.hcl` file that `init` creates. It pins the provider version.
+
+New services start with Google's "hello" placeholder image until the first code deploy.
 
 ## 5. First deploy
 
-Commit `config.env` and push to `main`. GitHub Actions runs the tests, then the **Deploy to Cloud Run** job builds all five images, pushes them and deploys.
+Push to `main`. GitHub Actions runs the tests and validates the Terraform. Then the **Deploy to Cloud Run** job builds all five images, pushes them and rolls each service onto its new image.
 
 You can also deploy straight from Cloud Shell:
 
@@ -129,13 +162,80 @@ https://cortex-gateway-<PROJECT_NUMBER>.<REGION>.run.app
 ## 6. Connect Firebase and Razorpay to the live URL
 
 - **Firebase:** go to **Authentication → Settings → Authorized domains → Add domain** and enter `cortex-gateway-<PROJECT_NUMBER>.<REGION>.run.app`.
-- **Razorpay** (test mode): go to **Webhooks → Add**. Set the URL to `https://cortex-gateway-…run.app/api/billing/webhook` and choose the events `payment.captured` and `payment.failed`. Pick a secret, add it as `RAZORPAY_WEBHOOK_SECRET` in `secrets.env`, then re-run `setup.sh` and `deploy.sh`.
+- **Razorpay** (test mode): go to **Webhooks → Add**:
+  1. Set the URL to `https://cortex-gateway-…run.app/api/billing/webhook`.
+  2. Choose the events `payment.captured` and `payment.failed`.
+  3. Pick a secret and put it in `secrets.env` as `RAZORPAY_WEBHOOK_SECRET`, then run `bootstrap.sh`.
+  4. Add `"razorpay-webhook-secret"` to `secrets` in `terraform.tfvars`, then run `terraform apply`.
 
-Open the site, sign in and send a message. To test a purchase, pay with UPI ID `success@razorpay`.
+Open the site, sign in and send a message. To test a purchase in test mode, choose **Netbanking**, pick any bank and click **Success**. UPI isn't always offered in test checkout.
 
 ## 7. Cost guardrail (do this)
 
 In the console, go to **Billing → Budgets & alerts → Create budget**. Choose this project, set an amount of ₹100 (or $1), and turn on email alerts at 50%, 90% and 100%.
+
+## Who owns what
+
+| Change | Where | How it ships |
+|---|---|---|
+| Code | `backend/`, `agent/`, `frontend/` | Push to `main`; CI builds images and runs `gcloud run services update --image` |
+| Service settings (env vars, models, memory, scaling, IAM, which secrets exist) | `infra/*.tf`, `terraform.tfvars` | `terraform plan` / `terraform apply` from Cloud Shell |
+| Secret values | `secrets.env` → Secret Manager | `bootstrap.sh`. New revisions pick up `latest` on the next deploy. |
+
+Terraform ignores each service's image, and CI changes nothing but the image, so the two never overwrite each other. CI only **validates** Terraform; it doesn't plan or apply. Planning needs read access to all IAM and secret metadata, and the CI deployer is deliberately limited to pushing images and rolling out revisions (`roles/run.developer`).
+
+## Adopting Terraform (deployments created with the old setup.sh)
+
+Earlier versions of this repo created the infrastructure with `setup.sh` and `gcloud run deploy`. `infra/imports.tf` adopts those existing resources into Terraform state, without recreating anything.
+
+1. In Cloud Shell, pull the latest code. Make sure the `secrets` list in `terraform.tfvars` matches what exists:
+
+   ```bash
+   gcloud secrets list --format='value(name)'
+   ```
+
+2. Run bootstrap once to create the state bucket. Without a `secrets.env` it skips secrets:
+
+   ```bash
+   bash deploy/gcp/bootstrap.sh
+   ```
+
+3. Initialise and plan:
+
+   ```bash
+   cd infra
+   ```
+
+   ```bash
+   terraform init -backend-config="bucket=<project-id>-tfstate"
+   ```
+
+   ```bash
+   terraform plan -out tf.plan
+   ```
+
+4. **Read the plan.** Expected:
+   - About 25 resources to **import**.
+   - New IAM members to **add**. They already exist in GCP, so adding them is a no-op.
+   - A few in-place **updates** to the Cloud Run services, such as env var ordering. Each produces a new revision with no downtime.
+
+   **Stop if anything says `destroy` or `must be replaced`**, and investigate first. The bucket and secrets have `prevent_destroy`, and the services have deletion protection, so a mistake fails loudly instead of deleting data.
+
+5. Apply it:
+
+   ```bash
+   terraform apply tf.plan
+   ```
+
+6. Optional cleanup: the old script gave the CI deployer broader roles than it needs. Terraform grants `roles/run.developer`, so remove the leftovers:
+
+   ```bash
+   gcloud projects remove-iam-policy-binding <project-id> --member serviceAccount:cortex-deployer@<project-id>.iam.gserviceaccount.com --role roles/run.admin
+   ```
+
+   ```bash
+   gcloud projects remove-iam-policy-binding <project-id> --member serviceAccount:cortex-deployer@<project-id>.iam.gserviceaccount.com --role roles/secretmanager.viewer
+   ```
 
 ## Operating it
 
@@ -145,20 +245,21 @@ In the console, go to **Billing → Budgets & alerts → Create budget**. Choose
 gcloud run services logs read cortex-agent --region asia-south1 --limit 50
 ```
 
-Every line is JSON with a `request_id` that's shared across services.
+Every entry is JSON with a `severity` and a `request_id` that's shared across services.
 
 - **Rollback:** go to **Cloud Run → service → Revisions** and route traffic to an earlier revision.
-- **Limits** live in `config.env`: `STARTING_CREDITS` and `DAILY_REQUEST_CAP`. `--max-instances` is set in `deploy.sh`.
+- **Limits and models** are set in `terraform.tfvars` (`starting_credits`, `daily_request_cap`, `models`, `max_instances`, `agent_min_instances`), then `terraform apply`.
 
 ### Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| A deploy step fails with a permission error | Re-run `setup.sh`; it's idempotent. Make sure `GITHUB_REPO` exactly matches `owner/name`. |
+| CI deploy fails with a permission error | Check that `terraform apply` has run; it grants the deployer its roles. Also check that `github_repo` in `terraform.tfvars` exactly matches `owner/name`. |
+| `terraform plan` wants to replace something | Don't apply. Compare that resource's settings in GCP with the `.tf` file and make the code match reality. |
 | A service won't start | Check its Cloud Run logs. A startup error names any missing env var, or the Mongo/Redis connection failure. |
 | `auth/unauthorized-domain` at sign-in | Add the run.app domain in Firebase (step 6). |
-| 502 "Service is temporarily unavailable" | An internal service is failing or cold. Check its logs. A 403 there means a missing `roles/run.invoker` grant, so re-run `deploy.sh`. |
-| First request is very slow | That's a cold start. It's expected when scaling to zero. |
+| 502 "Service is temporarily unavailable" | An internal service is failing or cold. Check its logs. A 403 there means a missing `roles/run.invoker` grant, so run `terraform apply`. |
+| First request is very slow | That's a cold start, expected when scaling to zero. Set `agent_min_instances = 1` to keep the agent warm (costs money). |
 
 ## Local development
 

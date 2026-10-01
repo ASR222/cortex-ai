@@ -53,11 +53,24 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: infra } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      # No backend and no credentials: this checks syntax, types and
+      # references only. `plan`/`apply` are run by a human in Cloud Shell.
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
   deploy:
     name: Deploy to Cloud Run
     # Only after every check passes, only for pushes to main, one at a time.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [go, agent, frontend]
+    needs: [go, agent, frontend, terraform]
     runs-on: ubuntu-latest
     permissions:
       contents: read

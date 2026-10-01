@@ -209,11 +209,29 @@ MongoDB, through the chat service, is the source of truth. Redis caches the last
 **Known trade-offs:**
 - **Atlas access.** Atlas must allow `0.0.0.0/0`, because Cloud Run's outbound IPs aren't fixed without Cloud NAT, which costs money. The strong generated password and TLS are the protection.
 - **Budget alerts are manual.** One is set up in the console.
-- **Infrastructure is created by shell scripts.** Terraform is the planned next step.
+
+### Infrastructure as code (Terraform)
+
+Everything in GCP is declared in `infra/`:
+- The APIs and the registry with its cleanup policy.
+- The service accounts and every IAM grant.
+- The secret containers, the bucket, and Workload Identity Federation.
+- The five Cloud Run services' configuration.
+
+`terraform plan` shows the exact difference between the code and what's running before anything changes, and every infrastructure change becomes a reviewable diff in git.
+
+| Decision | Why |
+|---|---|
+| **Terraform owns configuration; CI owns the image** | The Cloud Run resources `ignore_changes` on the container image, and CI runs `gcloud run services update --image` and nothing else. Infrastructure changes and code deploys can't overwrite each other, and code ships on every push without anyone running Terraform. |
+| **Secret values stay out of Terraform** | Terraform manages only the secret *containers* and who can read them. Values are uploaded by `bootstrap.sh`, so they never appear in Terraform state, which is stored in plain JSON. |
+| **Remote state in a versioned GCS bucket** | Shared, durable state with built-in locking. Versioning allows recovery from a bad state write. The bucket is created by `bootstrap.sh`, because Terraform can't create its own backend. |
+| **Existing resources were imported, not recreated** | `imports.tf` uses `import` blocks to adopt what the earlier scripts created, with no downtime and no data loss. This is how Terraform is usually introduced to running systems. |
+| **Guardrails against accidental deletion** | `prevent_destroy` on the bucket and secrets, and `deletion_protection` on the services. A bad change fails at plan time instead of deleting data. |
+| **CI only validates (`fmt`, `validate`); a human plans and applies** | Running `plan` in CI would require broad read access to IAM and secret metadata. Keeping it out lets the CI deployer stay at `roles/run.developer` (roll out images) with no IAM permissions. The trade-off is that someone must remember to apply infrastructure changes. A protected "apply" environment with manual approval would be the next step for a team. |
+| **Deterministic URLs computed in `locals`** | Services reference each other by URL rather than by resource attributes, so the graph has no cycles. |
 
 ## 15. Known limitations and next steps
 
-- **Terraform:** replace `setup.sh` with Terraform so every resource is declarative and reviewable.
 - **Stale credit reservations:** add a periodic reaper that refunds `reserved` records older than about 10 minutes (crash recovery). Cloud Scheduler plus a small endpoint would fit well.
 - **Fixed-window rate limits** allow bursts of up to 2× at window edges. A sliding window or token bucket (a Redis Lua script) would fix this.
 - **Content Security Policy:** add a strict CSP for the SPA. It needs allow-listing for Firebase auth, Razorpay and the Monaco CDN, and iframe previews inherit it.
@@ -236,3 +254,4 @@ MongoDB, through the chat service, is the source of truth. Redis caches the last
 - **"How do your services authenticate each other?"** Google identity tokens from the metadata server, with `roles/run.invoker` granted per service to mirror the call graph, plus a shared token for defence in depth. See §3.
 - **"How does CI/CD reach GCP without a key?"** Workload Identity Federation: GitHub's OIDC token is exchanged for short-lived deployer credentials, restricted to this repo's `main` branch. See §14.
 - **"Why Cloud Run and not Kubernetes?"** Five small stateless services, spiky low traffic and a free-tier budget. Scale-to-zero and no cluster to operate win; I'd revisit GKE for long-running workers, GPUs or a service mesh. See §14.
+- **"How do you manage infrastructure?"** Terraform with remote state in a versioned GCS bucket. Terraform owns configuration while CI owns only the image; secret values never enter Terraform; existing resources were adopted with `import` blocks; destructive changes are blocked by `prevent_destroy` and deletion protection. See §14.
