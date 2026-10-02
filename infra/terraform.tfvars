@@ -25,6 +25,6 @@ secrets = [
   "google-api-key",
   "tavily-api-key",
   "razorpay-key-secret",
-  # "razorpay-webhook-secret",
+  "razorpay-webhook-secret",
   # "openrouter-api-key",
 ]
