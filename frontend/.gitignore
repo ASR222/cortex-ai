@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Design-check output and harness (tasteskill)
+.taste-skill/

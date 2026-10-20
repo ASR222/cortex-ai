@@ -4,6 +4,7 @@ import { FaGoogle } from "react-icons/fa";
 import { signInWithPopup } from "firebase/auth";
 import ArtifactPanel from "../components/ArtifactPanel";
 import ChatArea from "../components/ChatArea";
+import Mark from "../components/Mark";
 import Sidebar from "../components/Sidebar";
 import { setUserData } from "../redux/user.slice";
 import { login } from "../features/user.api";
@@ -32,33 +33,46 @@ function Home() {
   };
 
   return (
-    <div className="h-screen flex bg-[#0d0f14] text-white overflow-hidden">
+    <div className="h-dvh flex bg-ground text-ink overflow-hidden">
       <Sidebar />
       <ChatArea />
       <ArtifactPanel />
 
       {checked && !userData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-          <div className="w-full max-w-[360px] bg-[#13151c] border border-white/[0.08] rounded-2xl p-7 flex flex-col gap-5">
-            <div className="flex flex-col gap-1.5">
-              <h2 className="text-[17px] font-semibold text-slate-100 tracking-tight">Welcome to CortexAI</h2>
-              <p className="text-[13px] text-slate-500 leading-relaxed">
-                A multi-agent assistant that chats, searches the web, writes code, reads your PDFs and creates
-                documents, slides and images.
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="signin-title"
+            className="w-full max-w-[380px] bg-surface rounded-[20px] p-7 flex flex-col gap-6"
+          >
+            <div className="flex flex-col gap-3">
+              <Mark size={28} />
+              <h2 id="signin-title" className="text-[20px] font-semibold tracking-[-0.01em]">
+                Sign in to CortexAI
+              </h2>
+              <p className="text-[14px] leading-[22px] text-muted">
+                One chat box, eight specialists. Each message goes to the one that fits: chat, web search, coding,
+                questions about a PDF or image, or a new PDF, slide deck or image.
               </p>
             </div>
 
-            <button
-              onClick={handleGoogleLogin}
-              disabled={signingIn}
-              className="w-full flex items-center justify-center gap-3 py-[11px] rounded-xl text-sm font-medium text-white bg-gradient-to-br from-indigo-500 to-violet-700 hover:from-indigo-400 hover:to-violet-600 border border-indigo-500/30 shadow-lg shadow-indigo-500/20 transition-all duration-150 cursor-pointer disabled:opacity-60"
-            >
-              <FaGoogle size={15} className="text-white" />
-              {signingIn ? "Signing in…" : "Continue with Google"}
-            </button>
-
-            {error && <p className="text-[12px] text-red-400">{error}</p>}
-            <p className="text-[11px] text-slate-600">New accounts start with free credits. No card needed.</p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleGoogleLogin}
+                disabled={signingIn}
+                className="w-full h-11 flex items-center justify-center gap-2.5 rounded-full text-[14px] font-medium bg-ink text-ground hover:bg-soft active:scale-[0.99] transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+              >
+                <FaGoogle size={14} />
+                {signingIn ? "Signing in…" : "Continue with Google"}
+              </button>
+              {error && (
+                <p role="alert" className="text-[13px] text-negative">
+                  {error}
+                </p>
+              )}
+              <p className="text-[12px] text-faint">New accounts start with free credits. No card needed.</p>
+            </div>
           </div>
         </div>
       )}

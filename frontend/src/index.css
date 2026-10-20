@@ -1,1 +1,65 @@
 @import "tailwindcss";
+
+/* True-black flat (tasteskill app sheet, seed 864971383).
+   Elevation is lightness alone: ground #000, surface #111, raised #2a2a2a.
+   One data hue, neural cyan, on data only: never on buttons, tabs or nav. */
+@theme {
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace; /* code only; taste-skill-ignore */
+  --color-ground: #000000;
+  --color-surface: #111111;
+  --color-hover: #1a1a1a;
+  --color-raised: #2a2a2a;
+  --color-rule: #1a1a1a;
+  --color-control: #444444;
+  --color-ink: #ffffff;
+  --color-soft: #bbbbbb; /* inactive nav labels */
+  --color-muted: #b4b4b4;
+  --color-faint: #949494;
+  --color-accent: #5cc8e6;
+  --color-negative: #e5566f;
+  --color-negative-bg: #2c1a20;
+  --color-warning: #e5a93b;
+  --color-warning-bg: #2b2414;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono); /* literal code only; taste-skill-ignore */
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-raised);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

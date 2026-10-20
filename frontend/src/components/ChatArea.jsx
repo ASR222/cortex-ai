@@ -4,43 +4,21 @@ import ChatInput from "./ChatInput";
 import MessageList from "./MessageList";
 import Navbar from "./Navbar";
 
-
 function ChatArea() {
-  const [banner,setBanner]=useState({
-    open:false,
-    title:"",
-    message:""
-});
+  const [banner, setBanner] = useState({ open: false, title: "", message: "" });
+
   return (
-    <div className="flex-1 flex flex-col min-w-0">
-
+    <main className="flex-1 flex flex-col min-w-0">
       <Navbar />
-
       <MessageList />
       <AIBanner
-
-   open={banner.open}
-
-   title={banner.title}
-
-   message={banner.message}
-
-   onClose={()=>
-
-      setBanner({
-         ...banner,
-         open:false
-      })
-
-   }
-
-/>
-
-     <ChatInput
-  setBanner={setBanner}
-/>
-
-    </div>
+        open={banner.open}
+        title={banner.title}
+        message={banner.message}
+        onClose={() => setBanner({ ...banner, open: false })}
+      />
+      <ChatInput setBanner={setBanner} />
+    </main>
   );
 }
 

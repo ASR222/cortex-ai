@@ -3,33 +3,13 @@ import { useDispatch, useSelector } from "react-redux";
 import { motion, AnimatePresence } from "framer-motion";
 import MessageBubble from "./MessageBubble";
 import { setDraft } from "../redux/message.slice";
+import { setAgent } from "../redux/ui.slice";
+import { AGENT_LABELS, CREDIT_COST, SPECIALISTS } from "../utils/agents";
 
-function NeuralPulse() {
-  return (
-    <div className="relative w-9 h-9 flex items-center justify-center shrink-0">
-      {[0, 0.45, 0.9].map((delay, i) => (
-        <motion.span
-          key={i}
-          className="absolute inset-0 rounded-full border border-cyan-400/30"
-          initial={{ scale: 0.3, opacity: 0.55 }}
-          animate={{ scale: 1.7, opacity: 0 }}
-          transition={{ duration: 1.8, repeat: Infinity, delay, ease: "easeOut" }}
-        />
-      ))}
-      <motion.span
-        className="w-2.5 h-2.5 rounded-full bg-gradient-to-br from-cyan-300 to-violet-400"
-        style={{ boxShadow: "0 0 14px rgba(125,211,252,0.55)" }}
-        animate={{ scale: [1, 1.25, 1] }}
-        transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-      />
-    </div>
-  );
-}
+const THINKING_LABELS = ["Thinking", "Reading your message", "Choosing a specialist", "Writing"];
 
-const THINKING_LABELS = ["Thinking", "Analyzing", "Reasoning", "Generating"];
-
-/** Shows the agent's live status ("Searching the web") or a cycling label. */
-function GeneratingIndicator({ status }) {
+/** The agent's live status ("Searching the web"), or a cycling label until it sends one. */
+function GeneratingIndicator({ status, agent }) {
   const [labelIndex, setLabelIndex] = useState(0);
   const [slow, setSlow] = useState(false);
 
@@ -46,19 +26,25 @@ function GeneratingIndicator({ status }) {
     return () => clearTimeout(timer);
   }, []);
 
-  const label = status || (slow ? "Waking up the servers — the first request after a while takes a few seconds" : THINKING_LABELS[labelIndex]);
+  const label =
+    status || (slow ? "Waking up the servers; the first request after a while takes a few seconds" : THINKING_LABELS[labelIndex]);
 
   return (
-    <div className="flex items-center gap-3 py-1">
-      <NeuralPulse />
+    <div className="flex items-center gap-2.5 h-6 text-[13px]" aria-live="polite">
+      <motion.span
+        className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"
+        animate={{ opacity: [1, 0.25, 1] }}
+        transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+      />
+      {agent && <span className="text-accent">{AGENT_LABELS[agent] || agent}</span>}
       <AnimatePresence mode="wait">
         <motion.span
           key={label}
-          className="text-[13px] font-medium tracking-wide text-slate-400"
-          initial={{ opacity: 0, y: 6 }}
+          className="text-muted"
+          initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
         >
           {label}…
         </motion.span>
@@ -67,16 +53,77 @@ function GeneratingIndicator({ status }) {
   );
 }
 
-const SUGGESTIONS = [
-  "Build a landing page for a coffee shop",
-  "What's new in AI this week?",
-  "Create a presentation on climate tech",
-  "Explain how Redis persistence works",
-];
+/** The first screen of a new chat: what each specialist does and what it costs. */
+function Specialists() {
+  const dispatch = useDispatch();
+  const { userData } = useSelector((state) => state.user);
+
+  const tryPrompt = (id, prompt) => {
+    dispatch(setAgent(id));
+    dispatch(setDraft(prompt));
+    document.getElementById("composer")?.focus();
+  };
+
+  return (
+    <div className="max-w-[760px] mx-auto px-5 md:px-6 pt-8 md:pt-10 pb-6">
+      <h1 className="text-[24px] font-semibold tracking-[-0.01em]">What should we work on?</h1>
+      <p className="mt-2 text-[15px] leading-[24px] text-muted">
+        {userData ? (
+          <>
+            You have <span className="num text-ink">{userData.credits ?? 0}</span> credits. An answer costs 1 to 5, and
+            failed answers are refunded.
+          </>
+        ) : (
+          "Each message goes to the specialist that fits it."
+        )}
+      </p>
+
+      <section aria-labelledby="specialists" className="mt-7">
+        <div className="flex items-baseline justify-between px-3 pb-2">
+          <h2 id="specialists" className="text-[16px] font-medium">
+            Specialists
+          </h2>
+          <span className="text-[12px] text-faint">Credits per answer</span>
+        </div>
+        <ul>
+          {SPECIALISTS.map(({ id, does, prompt }) => {
+            const body = (
+              <>
+                <span className="hidden sm:block w-[132px] shrink-0 text-[14px] font-medium">{AGENT_LABELS[id]}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="sm:hidden block text-[14px] font-medium">{AGENT_LABELS[id]}</span>
+                  <span className="block text-[14px] text-muted sm:truncate">{does}</span>
+                  <span className="block text-[13px] text-faint sm:truncate">
+                    {prompt ? `“${prompt}”` : `Runs when you attach ${id === "rag" ? "a PDF" : "an image"}`}
+                  </span>
+                </span>
+                <span className="num text-[14px] w-6 text-right shrink-0 self-start sm:self-center">{CREDIT_COST[id]}</span>
+              </>
+            );
+            const row = "w-full min-h-[52px] flex items-center gap-4 px-3 py-2 rounded-2xl text-left";
+            return (
+              <li key={id}>
+                {prompt ? (
+                  <button
+                    onClick={() => tryPrompt(id, prompt)}
+                    className={`${row} hover:bg-surface active:bg-hover transition-colors cursor-pointer`}
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div className={row}>{body}</div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    </div>
+  );
+}
 
 export default function MessageList() {
   const bottomRef = useRef(null);
-  const dispatch = useDispatch();
   const { messages, isLoading, status } = useSelector((state) => state.message);
   const lastContentLength = messages[messages.length - 1]?.content?.length || 0;
 
@@ -86,53 +133,34 @@ export default function MessageList() {
 
   if (messages.length === 0 && !isLoading) {
     return (
-      <div className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="h-full flex flex-col items-center justify-center gap-4 text-center">
-          <div className="flex flex-col gap-1.5">
-            <h1 className="text-[20px] font-semibold text-slate-200 tracking-tight">CortexAI</h1>
-            <h3 className="text-[15px] font-semibold text-slate-400 tracking-tight">How can I help you?</h3>
-            <p className="text-[13px] text-slate-600 max-w-[300px] leading-relaxed">
-              Chat, search the web, write code, ask questions about a PDF, or generate documents, slides and images.
-            </p>
-          </div>
-          <div className="flex flex-wrap justify-center gap-2 mt-1 max-w-[560px]">
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s}
-                onClick={() => dispatch(setDraft(s))}
-                className="text-[12px] text-slate-400 bg-white/[0.04] border border-white/[0.07] px-3.5 py-1.5 rounded-lg hover:bg-white/[0.08] hover:text-slate-200 transition-colors duration-150 cursor-pointer"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
+      <div className="flex-1 overflow-y-auto">
+        <Specialists />
       </div>
     );
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-3 md:px-6 py-6 space-y-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      {messages.map((msg, i) => {
-        const streaming = msg.pending && i === messages.length - 1;
-        if (streaming && !msg.content) {
-          return <GeneratingIndicator key={msg._id || i} status={status} />;
-        }
-        return (
-          <motion.div
-            key={msg._id || i}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.22, ease: "easeOut" }}
-          >
-            <MessageBubble message={msg} streaming={streaming} />
-            {streaming && status && (
-              <p className="mt-1 ml-1 text-[12px] text-slate-500 animate-pulse">{status}…</p>
-            )}
-          </motion.div>
-        );
-      })}
-      <div ref={bottomRef} />
+    <div className="flex-1 overflow-y-auto" aria-busy={isLoading}>
+      <div className="max-w-[760px] mx-auto px-5 md:px-6 py-8 space-y-8">
+        {messages.map((msg, i) => {
+          const streaming = msg.pending && i === messages.length - 1;
+          if (streaming && !msg.content) {
+            return <GeneratingIndicator key={msg._id || i} status={status} agent={msg.agent} />;
+          }
+          return (
+            <motion.div
+              key={msg._id || i}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+            >
+              <MessageBubble message={msg} streaming={streaming} />
+              {streaming && status && <p className="mt-2 text-[13px] text-muted">{status}…</p>}
+            </motion.div>
+          );
+        })}
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

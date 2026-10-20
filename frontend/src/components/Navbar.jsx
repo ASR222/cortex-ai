@@ -1,28 +1,77 @@
-import { MessageSquare } from "lucide-react";
-import { useSelector } from "react-redux";
+import { Code2, Menu } from "lucide-react";
+import { useDispatch, useSelector } from "react-redux";
+import { setBillingOpen, setCodeOpen, setNavOpen } from "../redux/ui.slice";
+
+/** Credits left at their true ratio, both ends of the track named. Opens billing. */
+function CreditMeter({ user }) {
+  const dispatch = useDispatch();
+  const credits = user.credits ?? 0;
+  const total = Math.max(user.totalCredits ?? 0, credits, 1);
+  const low = credits <= 10;
+  return (
+    <button
+      data-open-billing
+      onClick={() => dispatch(setBillingOpen(true))}
+      title="Credits and plans"
+      className="h-full flex items-center gap-3 pl-4 pr-1 cursor-pointer group"
+    >
+      <span className="text-[13px] text-muted group-hover:text-ink transition-colors whitespace-nowrap">
+        <span className={`num font-medium ${low ? "text-warning" : "text-ink"}`}>{credits}</span>
+        <span className="hidden sm:inline"> of </span>
+        <span className="hidden sm:inline num">{total}</span> credits
+      </span>
+      <span className="hidden md:block w-16 h-1.5 rounded-full bg-raised overflow-hidden" aria-hidden="true">
+        <span className="block h-full rounded-full bg-accent" style={{ width: `${(credits / total) * 100}%` }} />
+      </span>
+    </button>
+  );
+}
 
 export default function Navbar() {
-  const { selectedConversation } = useSelector(state => state.conversation);
-  const {messages} = useSelector(state => state.message);
-  return (
-    <div className="h-14 flex items-center justify-between px-5 border-b border-white/[0.06] bg-[#0d0f14]">
+  const dispatch = useDispatch();
+  const { selectedConversation } = useSelector((state) => state.conversation);
+  const { messages, artifacts } = useSelector((state) => state.message);
+  const { userData } = useSelector((state) => state.user);
+  const hasCode = artifacts?.length > 0;
 
-      {/* Left — chat title */}
-      <div className="flex items-center gap-2.5">
-        <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
-          <MessageSquare size={13} className="text-indigo-400" />
-        </div>
-        <h2 className="text-[14px] font-semibold text-slate-100 tracking-tight">
-          {selectedConversation?.title}
-        </h2>
-        <span className="text-[10px] font-medium text-slate-600 bg-white/[0.04] border border-white/[0.06] px-2 py-0.5 rounded-full">
-          {messages.length} Messages
-        </span>
+  return (
+    <header className="h-14 shrink-0 flex items-center gap-2 pl-3 lg:pl-6 pr-3 lg:pr-5 border-b border-rule">
+      <button
+        onClick={() => dispatch(setNavOpen(true))}
+        aria-label="Open chats"
+        className="lg:hidden flex items-center justify-center w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-full text-muted hover:text-ink hover:bg-surface cursor-pointer"
+      >
+        <Menu size={18} strokeWidth={1.6} />
+      </button>
+
+      <div className="flex-1 min-w-0 flex items-baseline gap-2.5">
+        {selectedConversation ? (
+          <>
+            <h1 className="text-[15px] font-medium truncate">{selectedConversation.title}</h1>
+            <span className="num text-[12px] text-faint whitespace-nowrap hidden sm:inline">
+              {messages.length} {messages.length === 1 ? "message" : "messages"}
+            </span>
+          </>
+        ) : (
+          <p className="text-[15px] font-medium">New chat</p>
+        )}
       </div>
 
-      {/* Right — actions */}
-     
+      {hasCode && (
+        <button
+          onClick={() => dispatch(setCodeOpen(true))}
+          className="lg:hidden h-8 pointer-coarse:h-11 flex items-center gap-1.5 px-3 rounded-full bg-surface hover:bg-hover text-[13px] cursor-pointer"
+        >
+          <Code2 size={14} strokeWidth={1.6} className="text-faint" />
+          Code
+        </button>
+      )}
 
-    </div>
+      {userData && (
+        <div className="h-full flex items-center border-l border-rule ml-1">
+          <CreditMeter user={userData} />
+        </div>
+      )}
+    </header>
   );
 }

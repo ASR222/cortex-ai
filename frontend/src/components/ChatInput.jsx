@@ -1,19 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Send,
-  Paperclip,
-  Square,
-  Zap,
-  MessageSquare,
-  Code2,
-  Presentation,
-  Image as ImageIcon,
-  Globe,
-  FileText,
-  X,
-  Mic,
-  MicOff,
-} from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, ChevronDown, Paperclip, Square, FileText, X, Mic, MicOff } from "lucide-react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   addMessage,
@@ -29,26 +15,18 @@ import { streamPrompt } from "../features/agent.api";
 import { createConversation } from "../features/conversation.api";
 import { addConversation, setConvTitle, setSelectedConversation } from "../redux/conversation.slice";
 import { setCredits } from "../redux/user.slice";
+import { setAgent } from "../redux/ui.slice";
+import { PICKABLE } from "../utils/agents";
 import { errorInfo } from "../utils/axios";
 
 const MAX_FILE_MB = 20;
-
-const AGENTS = [
-  { id: "auto", icon: Zap, label: "Auto" },
-  { id: "chat", icon: MessageSquare, label: "Chat" },
-  { id: "search", icon: Globe, label: "Search" },
-  { id: "coding", icon: Code2, label: "Coding" },
-  { id: "pdf", icon: FileText, label: "PDF" },
-  { id: "ppt", icon: Presentation, label: "PPT" },
-  { id: "image", icon: ImageIcon, label: "Image" },
-];
 
 const PLACEHOLDERS = {
   auto: "Ask CortexAI anything, or attach a PDF or image…",
   chat: "Chat with CortexAI…",
   coding: "Describe the app, website or code you need…",
   pdf: "Generate a PDF report about…",
-  ppt: "Create a presentation about…",
+  ppt: "Create a slide deck about…",
   image: "Describe the image to generate…",
   search: "Search the web for…",
 };
@@ -59,19 +37,28 @@ const titleFrom = (text) => {
 };
 
 export default function ChatInput({ setBanner }) {
-  const [selectedAgent, setSelectedAgent] = useState("auto");
   const [isListening, setIsListening] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
 
   const recognitionRef = useRef(null);
   const fileRef = useRef(null);
+  const textRef = useRef(null);
   const abortRef = useRef(null);
 
   const dispatch = useDispatch();
   const { selectedConversation } = useSelector((state) => state.conversation);
+  const selectedAgent = useSelector((state) => state.ui.agent);
   // The input text lives in Redux so the empty-state suggestion chips can fill it.
   const { isLoading, draft: value } = useSelector((state) => state.message);
   const setValue = (text) => dispatch(setDraft(text));
+
+  // The box grows with the message, up to about ten lines, then scrolls.
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 264)}px`;
+  }, [value]);
 
   const previewUrl = useMemo(
     () => (selectedFile?.type.startsWith("image/") ? URL.createObjectURL(selectedFile) : null),
@@ -126,7 +113,7 @@ export default function ChatInput({ setBanner }) {
   const handleEvent = (event, data) => {
     switch (event) {
       case "meta":
-        dispatch(patchLast({ agent: data.agent }));
+        dispatch(patchLast({ agent: data.agent, cost: data.cost }));
         break;
       case "status":
         dispatch(setStatus(data.message));
@@ -235,109 +222,126 @@ export default function ChatInput({ setBanner }) {
 
   const canSend = isLoading || value.trim() || selectedFile;
 
-  return (
-    <div className="w-full overflow-hidden px-3 md:px-5 py-4 border-t border-white/[0.06] bg-[#0d0f14]">
-      <div className="flex flex-col gap-2 bg-white/[0.03] border border-white/[0.07] rounded-2xl px-4 pt-3.5 pb-3">
-        <div className="flex gap-2 flex-wrap">
-          {AGENTS.map(({ id, icon: Icon, label }) => {
-            const active = selectedAgent === id;
-            return (
-              <button
-                key={id}
-                onClick={() => setSelectedAgent(id)}
-                className={`flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all cursor-pointer
-                  ${
-                    active
-                      ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white border-transparent shadow-[0_1px_8px_rgba(99,102,241,.35)]"
-                      : "bg-white/[0.03] text-slate-400 border-white/[0.06] hover:bg-white/[0.07]"
-                  }`}
-              >
-                <Icon size={13} className={active ? "text-white" : "text-slate-500"} />
-                {label}
-              </button>
-            );
-          })}
-        </div>
+  const iconButton =
+    "flex items-center justify-center w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-full text-faint hover:text-ink hover:bg-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
 
-        {selectedFile && (
-          <div className="my-2">
-            <div className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2">
-              {previewUrl ? (
-                <img src={previewUrl} alt="" className="h-10 w-10 rounded-lg object-cover" />
-              ) : (
-                <FileText size={16} className="text-red-400" />
-              )}
-              <div>
-                <p className="text-xs text-white max-w-[220px] truncate">{selectedFile.name}</p>
-                <p className="text-[10px] text-slate-500">{Math.ceil(selectedFile.size / 1024)} KB</p>
+  return (
+    <div className="w-full shrink-0 px-3 md:px-6 pt-2 pb-[max(12px,env(safe-area-inset-bottom))]">
+      <div className="max-w-[760px] mx-auto">
+        <div className="@container flex flex-col gap-2 bg-surface rounded-[24px] px-3 pt-3 pb-2.5">
+          {/* Narrow composers pick the specialist from a menu; wider ones show every option. */}
+          <label className="@min-[480px]:hidden relative self-start">
+            <span className="sr-only">Specialist</span>
+            <select
+              value={selectedAgent}
+              onChange={(e) => dispatch(setAgent(e.target.value))}
+              className="appearance-none h-8 pointer-coarse:h-11 pl-3 pr-8 rounded-full bg-raised text-[13px] text-ink cursor-pointer outline-none"
+            >
+              {PICKABLE.map(({ id, label }) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted" />
+          </label>
+          <div role="radiogroup" aria-label="Specialist" className="hidden @min-[480px]:flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {PICKABLE.map(({ id, icon: Icon, label }) => {
+              const active = selectedAgent === id;
+              return (
+                <button
+                  key={id}
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => dispatch(setAgent(id))}
+                  className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-[13px] transition-colors cursor-pointer
+                    ${active ? "bg-raised text-ink" : "text-muted hover:text-ink hover:bg-hover"}`}
+                >
+                  <Icon size={14} strokeWidth={1.6} className={`@max-[600px]:hidden ${active ? "text-ink" : "text-faint"}`} />
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedFile && (
+            <div className="px-1">
+              <div className="inline-flex items-center gap-2.5 rounded-2xl bg-hover pl-2 pr-1.5 py-1.5">
+                {previewUrl ? (
+                  <img src={previewUrl} alt="" className="h-9 w-9 rounded-xl object-cover" />
+                ) : (
+                  <span className="h-9 w-9 flex items-center justify-center">
+                    <FileText size={16} strokeWidth={1.6} className="text-muted" />
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <p className="text-[13px] max-w-[220px] truncate">{selectedFile.name}</p>
+                  <p className="num text-[12px] text-faint">{Math.ceil(selectedFile.size / 1024).toLocaleString()} KB</p>
+                </div>
+                <button onClick={clearFile} className={iconButton} aria-label="Remove file">
+                  <X size={15} />
+                </button>
               </div>
-              <button onClick={clearFile} className="ml-2 cursor-pointer" aria-label="Remove file">
-                <X size={14} className="text-slate-500 hover:text-white" />
+            </div>
+          )}
+
+          <textarea
+            id="composer"
+            ref={textRef}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={PLACEHOLDERS[selectedAgent]}
+            aria-label="Message"
+            rows={2}
+            maxLength={8000}
+            disabled={isLoading}
+            className="w-full px-2 bg-transparent outline-none resize-none text-[15px] leading-[24px] placeholder:text-faint [scrollbar-width:thin] disabled:opacity-50"
+          />
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-0.5">
+              <input
+                ref={fileRef}
+                type="file"
+                hidden
+                accept=".pdf,image/png,image/jpeg,image/webp,image/gif"
+                onChange={(e) => pickFile(e.target.files[0])}
+              />
+              <button
+                title="Attach a PDF or image"
+                aria-label="Attach a PDF or image"
+                className={iconButton}
+                onClick={() => fileRef.current.click()}
+                disabled={isLoading}
+              >
+                <Paperclip size={16} strokeWidth={1.6} />
+              </button>
+              <button
+                onClick={toggleMic}
+                title={isListening ? "Stop voice input" : "Voice input"}
+                aria-label={isListening ? "Stop voice input" : "Voice input"}
+                aria-pressed={isListening}
+                className={isListening ? `${iconButton} !bg-negative-bg !text-negative` : iconButton}
+              >
+                {isListening ? <MicOff size={16} strokeWidth={1.6} /> : <Mic size={16} strokeWidth={1.6} />}
               </button>
             </div>
-          </div>
-        )}
 
-        <textarea
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={PLACEHOLDERS[selectedAgent]}
-          rows={3}
-          maxLength={8000}
-          disabled={isLoading}
-          className="w-full bg-transparent outline-none resize-none text-[14px] text-slate-200 placeholder:text-slate-600 leading-relaxed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden disabled:opacity-50"
-        />
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <input
-              ref={fileRef}
-              type="file"
-              hidden
-              accept=".pdf,image/png,image/jpeg,image/webp,image/gif"
-              onChange={(e) => pickFile(e.target.files[0])}
-            />
             <button
-              title="Attach a PDF or image"
-              className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-600 hover:text-slate-400 hover:bg-white/[0.05] transition-all duration-150 cursor-pointer"
-              onClick={() => fileRef.current.click()}
-              disabled={isLoading}
+              onClick={handleSend}
+              disabled={!canSend}
+              title={isLoading ? "Stop" : "Send"}
+              aria-label={isLoading ? "Stop" : "Send"}
+              className="flex items-center justify-center w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-full bg-ink text-ground hover:bg-soft active:scale-95 transition cursor-pointer disabled:bg-raised disabled:text-faint disabled:cursor-not-allowed"
             >
-              <Paperclip size={14} />
-            </button>
-            <button
-              onClick={toggleMic}
-              title="Voice input"
-              className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all cursor-pointer ${
-                isListening ? "bg-red-500 text-white" : "text-slate-600 hover:bg-white/[0.05]"
-              }`}
-            >
-              {isListening ? <MicOff size={14} /> : <Mic size={14} />}
+              {isLoading ? <Square size={12} fill="currentColor" /> : <ArrowUp size={18} strokeWidth={2} />}
             </button>
           </div>
-
-          <button
-            onClick={handleSend}
-            disabled={!canSend}
-            title={isLoading ? "Stop" : "Send"}
-            className={`flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer transition-all duration-150
-              ${
-                isLoading
-                  ? "bg-white text-[#0d0f14] hover:bg-slate-200"
-                  : canSend
-                    ? "bg-gradient-to-br from-indigo-500 to-violet-700 hover:opacity-90 text-white"
-                    : "bg-white/[0.05] text-slate-600 cursor-not-allowed"
-              }`}
-          >
-            {isLoading ? <Square size={12} fill="currentColor" /> : <Send size={14} />}
-          </button>
         </div>
-      </div>
 
-      <p className="text-center text-[10.5px] text-slate-700 mt-2.5">
-        CortexAI can make mistakes. Verify important info.
-      </p>
+        <p className="text-center text-[12px] text-faint mt-2">CortexAI can make mistakes. Check important facts.</p>
+      </div>
     </div>
   );
 }
