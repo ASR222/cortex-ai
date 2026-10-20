@@ -11,13 +11,13 @@ permissions:
 jobs:
   go:
     name: Go services
-    # mongo:8 refuses to start on Linux 6.19+ (SERVER-121912), which the
-    # Ubuntu 26 runners use. Move back to ubuntu-latest once MongoDB fixes it.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     defaults: { run: { working-directory: backend } }
     services:
       mongo:
-        image: mongo:8
+        # mongo:8 exits on Linux 6.19+ (SERVER-121912), which every hosted
+        # runner now uses. Go back to mongo:8 once a fixed release ships.
+        image: mongo:7
         ports: ["27017:27017"]
     steps:
       - uses: actions/checkout@v4
