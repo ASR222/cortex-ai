@@ -4,7 +4,7 @@ A multi-agent AI assistant. One chat box routes each request to the right specia
 
 **Stack:** Go (gateway, auth, chat and billing services) · Python (FastAPI + LangGraph agent service) · React · MongoDB · Redis · Qdrant · **Google Cloud Run** · Secret Manager · Cloud Storage · Terraform · GitHub Actions CD · Docker
 
-> Live demo: `https://cortex-gateway-<project-number>.<region>.run.app` · Payments run in Razorpay **test mode**, so no real money moves.
+> Live demo: [cortex-gateway-720170616128.asia-south1.run.app](https://cortex-gateway-720170616128.asia-south1.run.app/) · Payments run in Razorpay **test mode**, so no real money moves.
 
 ---
 
